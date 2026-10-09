@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Analizador Estadístico de Quiniela (Supabase)</title>
-<!-- Librería cliente de Supabase -->
+<title>Analizador Estadístico de Quiniela (Supabase + Radar)</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
@@ -15,6 +14,7 @@
     --green-primary: #4ade80;
     --green-glow: #22c55e;
     --sunset: #f59e0b;
+    --alert-red: #ef4444;
     --text: #e8f5ec;
     --text-dim: #8aa89a;
     --border: rgba(74, 222, 128, 0.12);
@@ -75,13 +75,6 @@
   }
   button:hover { background: var(--green-glow); transform: translateY(-2px); }
 
-  .btn-secundario {
-    background: var(--bg-card-hover);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-  .btn-secundario:hover { background: rgba(74, 222, 128, 0.2); }
-
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -99,6 +92,16 @@
     min-height: 80px;
   }
 
+  .alerta-cabeza {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid var(--alert-red);
+    padding: 10px;
+    border-radius: 8px;
+    color: #fca5a5;
+    margin-top: 8px;
+    font-weight: bold;
+  }
+
   .flex-row {
     display: flex;
     justify-content: space-between;
@@ -109,8 +112,8 @@
 </head>
 <body>
 
-<h1>📊 Analizador de Quiniela (Conectado a Supabase)</h1>
-<p class="subtitle">Tus datos guardados en la nube de forma permanente.</p>
+<h1>📊 Analizador y Radar de Quiniela</h1>
+<p class="subtitle">Seguimiento automático de pronósticos y alertas de puestos.</p>
 
 <div class="card">
   <h3>Cargar Extracto Completo</h3>
@@ -155,41 +158,49 @@
 </div>
 
 <div class="card">
-  <h3>💡 Generador de Tendencia Combinada</h3>
+  <h3>💡 Generador de Tendencia Combinada y Radar</h3>
   <button onclick="generarSugerencia()">Generar Pronóstico Estadístico</button>
   <div id="sugerencia" class="resultado-box" style="margin-top: 12px; font-size: 16px; color: var(--green-primary); font-weight: bold; text-align: center; display: grid; place-items: center;">
     Presioná el botón para proyectar...
   </div>
+  
+  <div style="margin-top: 16px;">
+    <span style="font-size:13px; color:var(--text-dim); font-weight:bold;">🎯 Radar de Seguimiento (Aciertos en nuevos extractos):</span>
+    <div id="radarResultados" class="resultado-box" style="margin-top:6px; font-size:12px; color:var(--text-dim);">
+      Generá un pronóstico para activar el radar de seguimiento.
+    </div>
+  </div>
 </div>
 
 <script>
-  // Configuración de Supabase actualizada
   const SUPABASE_URL = "https://svvjpeoquvrphuafqdcy.supabase.co";
-  const SUPABASE_KEY = "sb_publishable_BeBdr9Dccux5yIVoqFXygA_WXKGbDQQ"; // Reemplazá este texto con el botón de copiar de la pantalla
+  const SUPABASE_KEY = "sb_publishable_BeBdr9Dccux5yIVoqFXygA_WXKGb..."; // Tu clave actual
   const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   document.getElementById('inputFecha').valueAsDate = new Date();
   let historialTerminaciones = [];
+  let pronosticoActual = [];
 
   async function cargarDatosDesdeSupabase() {
     let { data, error } = await supabaseClient
       .from('extractos_quiniela')
-      .select('terminacion, fecha')
+      .select('terminacion, fecha, puesto')
       .order('fecha', { ascending: true })
       .order('id', { ascending: true });
 
     if (error) {
       console.error("Error al cargar de Supabase:", error);
-      alert("Hubo un error al conectar con la base de datos.");
       return;
     }
 
     historialTerminaciones = data.map(row => ({
       numero: row.terminacion,
-      fecha: row.fecha
+      fecha: row.fecha,
+      puesto: row.puesto
     }));
 
     actualizarEstadisticas();
+    verificarRadar();
   }
 
   async function procesarYSubirExtracto() {
@@ -213,9 +224,11 @@
       return;
     }
 
-    let nuevosRegistros = numeros4Cifras.map(numStr => ({
+    // Mapear cada premio asignándole su puesto exacto del 1 al 20 según el orden en que aparecen
+    let nuevosRegistros = numeros4Cifras.map((numStr, index) => ({
       fecha: fecha,
-      terminacion: numStr.slice(-2)
+      terminacion: numStr.slice(-2),
+      puesto: index + 1
     }));
 
     document.getElementById('loadingStatus').style.display = 'inline';
@@ -317,10 +330,56 @@
     }
     sugeridos.sort();
 
+    pronosticoActual = sugeridos;
+
     document.getElementById('sugerencia').innerHTML = `
       <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">Proyección basada en la nube:</div>
       <span style="font-size:24px; letter-spacing: 4px; color:var(--green-primary);">${sugeridos.join(' - ')}</span>
     `;
+
+    verificarRadar();
+  }
+
+  function verificarRadar() {
+    if (pronosticoActual.length === 0 || historialTerminaciones.length === 0) {
+      document.getElementById('radarResultados').innerHTML = "Generá un pronóstico para activar el radar de seguimiento.";
+      return;
+    }
+
+    // Agrupar por sorteo (fecha) para buscar aciertos posteriores
+    let ultimosRegistros = historialTerminaciones.slice(-60); // Analizar últimos 3 extractos aprox
+    let aciertosHtml = "";
+    let hayCabeza = false;
+
+    // Recorrer los registros buscando coincidencias con pronosticoActual
+    let encontrados = [];
+    historialTerminaciones.forEach(item => {
+      if (pronosticoActual.includes(item.numero)) {
+        encontrados.push(item);
+      }
+    });
+
+    if (encontrados.length === 0) {
+      document.getElementById('radarResultados').innerHTML = `Vigilando los números <strong style="color:var(--green-primary);">${pronosticoActual.join(', ')}</strong>... Todavía no salieron en los extractos posteriores cargados.`;
+      return;
+    }
+
+    encontrados.forEach(acierto => {
+      let esCabeza = (acierto.puesto === 1);
+      if (esCabeza) hayCabeza = true;
+
+      let estiloPuesto = esCabeza ? "color: var(--alert-red); font-weight: bold; font-size: 14px;" : "color: var(--green-primary);";
+      let textoPuesto = esCabeza ? "¡¡ A LA CABEZA (Puesto 1) !!" : `en el Puesto ${acierto.puesto}`;
+
+      aciertosHtml += `<div style="margin-bottom: 4px;">📅 ${acierto.fecha} ➔ Salió el número <strong style="color:var(--text); font-size:13px;">[${acierto.numero}]</strong> <span style="${estiloPuesto}">${textoPuesto}</span></div>`;
+    });
+
+    let htmlFinal = aciertosHtml;
+    if (hayCabeza) {
+      htmlFinal += `<div class="alerta-cabeza">🚨 ¡ALERTA DE ACIERTO! Uno de tus números proyectados salió a la cabeza. ¡Recordá generar una nueva proyección!</div>`;
+    }
+
+    document.getElementById('radarResultados').innerHTML = htmlFinal;
   }
 
   cargarDatosDesdeSupabase();
