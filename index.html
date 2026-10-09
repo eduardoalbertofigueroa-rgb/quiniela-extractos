@@ -158,8 +158,8 @@
 </div>
 
 <div class="card">
-  <h3>💡 Generador de Tendencia Combinada y Radar</h3>
-  <button onclick="generarSugerencia()">Generar Pronóstico Estadístico</button>
+  <h3>💡 Generador de Tendencia de Corto Alcance y Radar</h3>
+  <button onclick="generarSugerencia()">Generar Pronóstico Rápido</button>
   <div id="sugerencia" class="resultado-box" style="margin-top: 12px; font-size: 16px; color: var(--green-primary); font-weight: bold; text-align: center; display: grid; place-items: center;">
     Presioná el botón para proyectar...
   </div>
@@ -224,7 +224,6 @@
       return;
     }
 
-    // Mapear cada premio asignándole su puesto exacto del 1 al 20 según el orden en que aparecen
     let nuevosRegistros = numeros4Cifras.map((numStr, index) => ({
       fecha: fecha,
       terminacion: numStr.slice(-2),
@@ -302,38 +301,25 @@
       return;
     }
 
-    let conteo = {};
-    for (let i = 0; i <= 99; i++) conteo[String(i).padStart(2, '0')] = 0;
-    historialTerminaciones.forEach(item => conteo[item.numero]++);
-    let calientes = Object.keys(conteo).sort((a, b) => conteo[b] - conteo[a]).slice(0, 15);
-
-    let ultimoIndice = {};
-    for (let i = 0; i <= 99; i++) ultimoIndice[String(i).padStart(2, '0')] = -1;
-    historialTerminaciones.forEach((item, index) => ultimoIndice[item.numero] = index);
+    // Estrategia de Corto Alcance: Analizar solo los últimos 40 números para cazar tendencias rápidas
+    let ultimosCorte = historialTerminaciones.slice(-40);
+    let conteoCorto = {};
+    for (let i = 0; i <= 99; i++) conteoCorto[String(i).padStart(2, '0')] = 0;
     
-    let atrasos = [];
-    for (let i = 0; i <= 99; i++) {
-      let numStr = String(i).padStart(2, '0');
-      atrasos.push({ numero: numStr, atraso: ultimoIndice[numStr] === -1 ? 999 : (historialTerminaciones.length - 1 - ultimoIndice[numStr]) });
-    }
-    atrasos.sort((a, b) => b.atraso - a.atraso);
-    let friosTop = atrasos.slice(0, 15).map(x => x.numero);
+    ultimosCorte.forEach(item => {
+      if (conteoCorto[item.numero] !== undefined) conteoCorto[item.numero]++;
+    });
 
-    let sugeridos = [];
-    while (sugeridos.length < 2 && calientes.length > 0) {
-      let rand = calientes[Math.floor(Math.random() * calientes.length)];
-      if (!sugeridos.includes(rand)) sugeridos.push(rand);
-    }
-    while (sugeridos.length < 4 && friosTop.length > 0) {
-      let rand = friosTop[Math.floor(Math.random() * friosTop.length)];
-      if (!sugeridos.includes(rand)) sugeridos.push(rand);
-    }
+    let calientesRecientes = Object.keys(conteoCorto).sort((a, b) => conteoCorto[b] - conteoCorto[a]);
+
+    // Seleccionar los 4 números con mejor inercia a corto plazo
+    let sugeridos = calientesRecientes.slice(0, 4);
     sugeridos.sort();
 
     pronosticoActual = sugeridos;
 
     document.getElementById('sugerencia').innerHTML = `
-      <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">Proyección basada en la nube:</div>
+      <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">Proyección de Corto Alcance (Tendencia Rápida):</div>
       <span style="font-size:24px; letter-spacing: 4px; color:var(--green-primary);">${sugeridos.join(' - ')}</span>
     `;
 
@@ -346,12 +332,6 @@
       return;
     }
 
-    // Agrupar por sorteo (fecha) para buscar aciertos posteriores
-    let ultimosRegistros = historialTerminaciones.slice(-60); // Analizar últimos 3 extractos aprox
-    let aciertosHtml = "";
-    let hayCabeza = false;
-
-    // Recorrer los registros buscando coincidencias con pronosticoActual
     let encontrados = [];
     historialTerminaciones.forEach(item => {
       if (pronosticoActual.includes(item.numero)) {
@@ -364,12 +344,15 @@
       return;
     }
 
+    let aciertosHtml = "";
+    let hayCabeza = false;
+
     encontrados.forEach(acierto => {
       let esCabeza = (acierto.puesto === 1);
       if (esCabeza) hayCabeza = true;
 
       let estiloPuesto = esCabeza ? "color: var(--alert-red); font-weight: bold; font-size: 14px;" : "color: var(--green-primary);";
-      let textoPuesto = esCabeza ? "¡¡ A LA CABEZA (Puesto 1) !!" : `en el Puesto ${acierto.puesto}`;
+      let textoPuesto = esCabeza ? "¡¡ A LA CABEZA (Puesto 1) !!" : `en el Puesto ${acierto.puesto || 'desconocido'}`;
 
       aciertosHtml += `<div style="margin-bottom: 4px;">📅 ${acierto.fecha} ➔ Salió el número <strong style="color:var(--text); font-size:13px;">[${acierto.numero}]</strong> <span style="${estiloPuesto}">${textoPuesto}</span></div>`;
     });
