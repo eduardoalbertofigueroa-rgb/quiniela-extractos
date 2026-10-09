@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Analizador Estadístico de Quiniela (Supabase)</title>
+<!-- Librería cliente de Supabase -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg-deep: #0a1410;
+    --bg-base: #0f1f16;
+    --bg-card: #142922;
+    --bg-card-hover: #1a3a2e;
+    --green-primary: #4ade80;
+    --green-glow: #22c55e;
+    --sunset: #f59e0b;
+    --text: #e8f5ec;
+    --text-dim: #8aa89a;
+    --border: rgba(74, 222, 128, 0.12);
+  }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg-deep);
+    color: var(--text);
+    padding: 20px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  h1 { color: var(--green-primary); font-size: 24px; margin-bottom: 6px; }
+  p.subtitle { color: var(--text-dim); font-size: 14px; margin-bottom: 20px; }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .card h3 { margin-top: 0; font-size: 16px; color: var(--green-primary); margin-bottom: 12px; }
+
+  textarea, input, select, button {
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    font-size: 14px;
+    font-family: inherit;
+  }
+
+  textarea {
+    width: 100%;
+    height: 100px;
+    background: var(--bg-deep);
+    color: var(--text);
+    resize: vertical;
+    font-family: monospace;
+    font-size: 14px;
+  }
+
+  input[type="date"] {
+    background: var(--bg-deep);
+    color: var(--text);
+  }
+
+  button {
+    background: var(--green-primary);
+    color: #051209;
+    font-weight: bold;
+    cursor: pointer;
+    border: none;
+    transition: 0.2s;
+  }
+  button:hover { background: var(--green-glow); transform: translateY(-2px); }
+
+  .btn-secundario {
+    background: var(--bg-card-hover);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secundario:hover { background: rgba(74, 222, 128, 0.2); }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 16px;
+  }
+
+  .resultado-box {
+    background: var(--bg-deep);
+    padding: 14px;
+    border-radius: 10px;
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    border: 1px solid var(--border);
+    min-height: 80px;
+  }
+
+  .flex-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>📊 Analizador de Quiniela (Conectado a Supabase)</h1>
+<p class="subtitle">Tus datos guardados en la nube de forma permanente.</p>
+
+<div class="card">
+  <h3>Cargar Extracto Completo</h3>
+  <div style="margin-bottom: 12px;">
+    <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">Fecha del Sorteo:</label>
+    <input type="date" id="inputFecha">
+  </div>
+  <div style="margin-bottom: 12px;">
+    <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">Pegá todo el texto de la tabla acá:</label>
+    <textarea id="inputTextarea" placeholder="Ej: Sombrear toda la tabla de la web y pegar acá..."></textarea>
+  </div>
+  <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+    <button onclick="procesarYSubirExtracto()">Subir Extracto a Supabase</button>
+    <span id="loadingStatus" style="align-self: center; font-size: 13px; color: var(--sunset); display: none;">Guardando en la nube...</span>
+  </div>
+  <p id="totalSorteos" style="margin-top: 12px; font-size: 13px; color: var(--text-dim);">Total de números en la base de datos: 0</p>
+</div>
+
+<div class="card">
+  <div class="flex-row">
+    <h3 style="margin:0;">⚙️ Panel Estadístico Global</h3>
+    <div>
+      <label style="font-size:12px; color:var(--text-dim);">Analizar últimos:</label>
+      <select id="filtroAlcance" onchange="actualizarEstadisticas()" style="background:var(--bg-deep); color:var(--text); border-radius:8px; padding:6px 10px;">
+        <option value="todos">Todo el historial</option>
+        <option value="100">Últimos 100 números</option>
+        <option value="50">Últimos 50 números</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="stats-grid" style="margin-top: 14px;">
+    <div>
+      <span style="font-size:12px; color:var(--text-dim); font-weight:bold;">🔥 Más Frecuentes (Calientes)</span>
+      <div id="frecuentes" class="resultado-box" style="margin-top:6px;">Cargando datos...</div>
+    </div>
+    <div>
+      <span style="font-size:12px; color:var(--text-dim); font-weight:bold;">❄️ Más Atrasados (Fríos)</span>
+      <div id="atrasados" class="resultado-box" style="margin-top:6px;">Cargando datos...</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>💡 Generador de Tendencia Combinada</h3>
+  <button onclick="generarSugerencia()">Generar Pronóstico Estadístico</button>
+  <div id="sugerencia" class="resultado-box" style="margin-top: 12px; font-size: 16px; color: var(--green-primary); font-weight: bold; text-align: center; display: grid; place-items: center;">
+    Presioná el botón para proyectar...
+  </div>
+</div>
+
+<script>
+  // Configuración de Supabase
+  const SUPABASE_URL = "https://chtpiyddqjcpbpxpnolo.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_PqTfEpdmzLj42gBvUqM1qQ_YQQA9d0W";
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  document.getElementById('inputFecha').valueAsDate = new Date();
+  let historialTerminaciones = [];
+
+  // Al abrir la página, descargar todos los datos de Supabase
+  async function cargarDatosDesdeSupabase() {
+    let { data, error } = await supabaseClient
+      .from('extractos_quiniela')
+      .select('terminacion, fecha')
+      .order('fecha', { ascending: true })
+      .order('id', { ascending: true });
+
+    if (error) {
+      console.error("Error al cargar de Supabase:", error);
+      alert("Hubo un error al conectar con la base de datos.");
+      return;
+    }
+
+    // Mapear al formato que usa el script
+    historialTerminaciones = data.map(row => ({
+      numero: row.terminacion,
+      fecha: row.fecha
+    }));
+
+    actualizarEstadisticas();
+  }
+
+  async function procesarYSubirExtracto() {
+    let texto = document.getElementById('inputTextarea').value.trim();
+    let fecha = document.getElementById('inputFecha').value;
+
+    if (!texto) {
+      alert("Por favor pegá el texto del extracto.");
+      return;
+    }
+
+    let tokens = texto.match(/\d+/g);
+    if (!tokens || tokens.length === 0) {
+      alert("No se detectaron números válidos en el texto.");
+      return;
+    }
+
+    // Filtrar solo los números de 4 cifras (premios reales)
+    let numeros4Cifras = tokens.filter(numStr => numStr.length === 4);
+    if (numeros4Cifras.length === 0) {
+      alert("No se encontraron números de 4 cifras válidos.");
+      return;
+    }
+
+    // Preparar los registros para enviar a Supabase en bloque
+    let nuevosRegistros = numeros4Cifras.map(numStr => ({
+      fecha: fecha,
+      terminacion: numStr.slice(-2)
+    }));
+
+    document.getElementById('loadingStatus').style.display = 'inline';
+
+    let { error } = await supabaseClient
+      .from('extractos_quiniela')
+      .insert(nuevosRegistros);
+
+    document.getElementById('loadingStatus').style.display = 'none';
+
+    if (error) {
+      console.error("Error al guardar:", error);
+      alert("Error al guardar en Supabase.");
+      return;
+    }
+
+    alert("¡Extracto guardado en la nube con éxito!");
+    document.getElementById('inputTextarea').value = '';
+    
+    // Recargar todo el historial actualizado desde la base
+    cargarDatosDesdeSupabase();
+  }
+
+  function actualizarEstadisticas() {
+    document.getElementById('totalSorteos').textContent = "Total de números de 2 cifras en Supabase: " + historialTerminaciones.length;
+    if (historialTerminaciones.length === 0) {
+      document.getElementById('frecuentes').textContent = "Sin datos en la base...";
+      document.getElementById('atrasados').textContent = "Sin datos en la base...";
+      return;
+    }
+
+    let alcanceStr = document.getElementById('filtroAlcance').value;
+    let datosAnalisis = historialTerminaciones;
+    if (alcanceStr !== 'todos') {
+      let cantidad = parseInt(alcanceStr);
+      datosAnalisis = historialTerminaciones.slice(-cantidad);
+    }
+
+    let conteo = {};
+    for (let i = 0; i <= 99; i++) conteo[String(i).padStart(2, '0')] = 0;
+    
+    datosAnalisis.forEach(item => {
+      if (conteo[item.numero] !== undefined) conteo[item.numero]++;
+    });
+
+    let ordenadosFrecuencia = Object.keys(conteo).sort((a, b) => conteo[b] - conteo[a]);
+
+    let ultimoIndice = {};
+    for (let i = 0; i <= 99; i++) ultimoIndice[String(i).padStart(2, '0')] = -1;
+
+    historialTerminaciones.forEach((item, index) => {
+      ultimoIndice[item.numero] = index;
+    });
+
+    let atrasos = [];
+    for (let i = 0; i <= 99; i++) {
+      let numStr = String(i).padStart(2, '0');
+      let atraso = ultimoIndice[numStr] === -1 ? historialTerminaciones.length : (historialTerminaciones.length - 1 - ultimoIndice[numStr]);
+      atrasos.push({ numero: numStr, atraso: atraso });
+    }
+    atrasos.sort((a, b) => b.atraso - a.atraso);
+
+    let textCalientes = ordenadosFrecuencia.slice(0, 5).map(n => `Nº ${n} (${conteo[n]} apariciones)`).join('\n');
+    document.getElementById('frecuentes').innerHTML = textCalientes.replace(/\n/g, '<br>');
+
+    let textFrios = atrasos.slice(0, 5).map(item => `Nº ${item.numero} (${item.atraso} pos. sin salir)`).join('\n');
+    document.getElementById('atrasados').innerHTML = textFrios.replace(/\n/g, '<br>');
+  }
+
+  function generarSugerencia() {
+    if (historialTerminaciones.length === 0) {
+      alert("No hay datos cargados en la base todavía.");
+      return;
+    }
+
+    let conteo = {};
+    for (let i = 0; i <= 99; i++) conteo[String(i).padStart(2, '0')] = 0;
+    historialTerminaciones.forEach(item => conteo[item.numero]++);
+    let calientes = Object.keys(conteo).sort((a, b) => conteo[b] - conteo[a]).slice(0, 15);
+
+    let ultimoIndice = {};
+    for (let i = 0; i <= 99; i++) ultimoIndice[String(i).padStart(2, '0')] = -1;
+    historialTerminaciones.forEach((item, index) => ultimoIndice[item.numero] = index);
+    
+    let atrasos = [];
+    for (let i = 0; i <= 99; i++) {
+      let numStr = String(i).padStart(2, '0');
+      atrasos.push({ numero: numStr, atraso: ultimoIndice[numStr] === -1 ? 999 : (historialTerminaciones.length - 1 - ultimoIndice[numStr]) });
+    }
+    atrasos.sort((a, b) => b.atraso - a.atraso);
+    let friosTop = atrasos.slice(0, 15).map(x => x.numero);
+
+    let sugeridos = [];
+    while (sugeridos.length < 2 && calientes.length > 0) {
+      let rand = calientes[Math.floor(Math.random() * calientes.length)];
+      if (!sugeridos.includes(rand)) sugeridos.push(rand);
+    }
+    while (sugeridos.length < 4 && friosTop.length > 0) {
+      let rand = friosTop[Math.floor(Math.random() * friosTop.length)];
+      if (!sugeridos.includes(rand)) sugeridos.push(rand);
+    }
+    sugeridos.sort();
+
+    document.getElementById('sugerencia').innerHTML = `
+      <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">Proyección basada en la nube:</div>
+      <span style="font-size:24px; letter-spacing: 4px; color:var(--green-primary);">${sugeridos.join(' - ')}</span>
+    `;
+  }
+
+  // Ejecutar carga inicial al abrir
+  cargarDatosDesdeSupabase();
+</script>
+
+</body>
+</html>
