@@ -163,15 +163,14 @@
 </div>
 
 <script>
-  // Configuración de Supabase
-  const SUPABASE_URL = "https://chtpiyddqjcpbpxpnolo.supabase.co";
-  const SUPABASE_KEY = "sb_publishable_PqTfEpdmzLj42gBvUqM1qQ_YQQA9d0W";
+  // Configuración de Supabase actualizada
+  const SUPABASE_URL = "https://svvjpeoquvrphuafqdcy.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_BeBdr9Dccux5yIVoqFXygA_WXKGbDQQ"; // Reemplazá este texto con el botón de copiar de la pantalla
   const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   document.getElementById('inputFecha').valueAsDate = new Date();
   let historialTerminaciones = [];
 
-  // Al abrir la página, descargar todos los datos de Supabase
   async function cargarDatosDesdeSupabase() {
     let { data, error } = await supabaseClient
       .from('extractos_quiniela')
@@ -185,7 +184,6 @@
       return;
     }
 
-    // Mapear al formato que usa el script
     historialTerminaciones = data.map(row => ({
       numero: row.terminacion,
       fecha: row.fecha
@@ -209,14 +207,12 @@
       return;
     }
 
-    // Filtrar solo los números de 4 cifras (premios reales)
     let numeros4Cifras = tokens.filter(numStr => numStr.length === 4);
     if (numeros4Cifras.length === 0) {
       alert("No se encontraron números de 4 cifras válidos.");
       return;
     }
 
-    // Preparar los registros para enviar a Supabase en bloque
     let nuevosRegistros = numeros4Cifras.map(numStr => ({
       fecha: fecha,
       terminacion: numStr.slice(-2)
@@ -238,8 +234,6 @@
 
     alert("¡Extracto guardado en la nube con éxito!");
     document.getElementById('inputTextarea').value = '';
-    
-    // Recargar todo el historial actualizado desde la base
     cargarDatosDesdeSupabase();
   }
 
@@ -329,7 +323,6 @@
     `;
   }
 
-  // Ejecutar carga inicial al abrir
   cargarDatosDesdeSupabase();
 </script>
 
