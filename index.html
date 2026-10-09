@@ -301,8 +301,8 @@
       return;
     }
 
-    // Estrategia de Corto Alcance: Analizar solo los últimos 40 números para cazar tendencias rápidas
-    let ultimosCorte = historialTerminaciones.slice(-40);
+    // Analizar los últimos 50 números para obtener un abanico dinámico de opciones frescas
+    let ultimosCorte = historialTerminaciones.slice(-50);
     let conteoCorto = {};
     for (let i = 0; i <= 99; i++) conteoCorto[String(i).padStart(2, '0')] = 0;
     
@@ -310,16 +310,25 @@
       if (conteoCorto[item.numero] !== undefined) conteoCorto[item.numero]++;
     });
 
-    let calientesRecientes = Object.keys(conteoCorto).sort((a, b) => conteoCorto[b] - conteoCorto[a]);
+    // Tomar los 15 números con mejor frecuencia reciente
+    let calientesRecientes = Object.keys(conteoCorto).sort((a, b) => conteoCorto[b] - conteoCorto[a]).slice(0, 15);
 
-    // Seleccionar los 4 números con mejor inercia a corto plazo
-    let sugeridos = calientesRecientes.slice(0, 4);
+    // Seleccionar 4 números al azar de entre esos candidatos para que varíen en cada click
+    let sugeridos = [];
+    let candidatosCopia = [...calientesRecientes];
+    while (sugeridos.length < 4 && candidatosCopia.length > 0) {
+      let randomIndex = Math.floor(Math.random() * candidatosCopia.length);
+      let numElegido = candidatosCopia.splice(randomIndex, 1)[0];
+      if (!sugeridos.includes(numElegido)) {
+        sugeridos.push(numElegido);
+      }
+    }
     sugeridos.sort();
 
     pronosticoActual = sugeridos;
 
     document.getElementById('sugerencia').innerHTML = `
-      <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">Proyección de Corto Alcance (Tendencia Rápida):</div>
+      <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">Proyección de Corto Alcance (Dinámica):</div>
       <span style="font-size:24px; letter-spacing: 4px; color:var(--green-primary);">${sugeridos.join(' - ')}</span>
     `;
 
