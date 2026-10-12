@@ -74,6 +74,8 @@
     transition: 0.2s;
   }
   button:hover { background: var(--green-glow); transform: translateY(-2px); }
+  button:disabled, button:disabled:hover { background: var(--green-primary); transform: none; opacity: 0.4; cursor: not-allowed; }
+  textarea:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .stats-grid {
     display: grid;
@@ -102,31 +104,50 @@
     font-weight: bold;
   }
 
+  .aviso-acierto {
+    background: rgba(74, 222, 128, 0.12);
+    border: 1px solid var(--green-primary);
+    padding: 10px;
+    border-radius: 8px;
+    color: var(--green-primary);
+    margin-top: 8px;
+    font-weight: bold;
+  }
+
   .flex-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 12px;
   }
+
+  table.ciclos { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.ciclos th, table.ciclos td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  table.ciclos th { color: var(--text-dim); font-weight: normal; }
 </style>
 </head>
 <body>
 
 <h1>📊 Analizador y Radar de Quiniela</h1>
-<p class="subtitle">Seguimiento automático de pronósticos y alertas de puestos.</p>
+<p class="subtitle">Seguimiento automático de pronósticos: cuántos sorteos tardan en salir dentro de los 10 primeros.</p>
 
 <div class="card">
   <h3>Cargar Extracto Completo</h3>
   <div style="margin-bottom: 12px;">
-    <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">Fecha del Sorteo:</label>
-    <input type="date" id="inputFecha">
+    <span style="font-size:12px; color:var(--text-dim); font-weight:bold;">🕘 Últimas cargas (para ubicarte):</span>
+    <div id="ultimasCargas" class="resultado-box" style="margin-top:6px; min-height:40px; font-size:12px; color:var(--text-dim);">Leyendo la base de datos...</div>
   </div>
   <div style="margin-bottom: 12px;">
-    <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">Pegá todo el texto de la tabla acá:</label>
-    <textarea id="inputTextarea" placeholder="Ej: Sombrear toda la tabla de la web y pegar acá..."></textarea>
+    <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">Fecha del Sorteo:</label>
+    <input type="date" id="inputFecha" oninput="revisarFecha()" onchange="revisarFecha()">
+    <div id="estadoFecha" style="margin-top:6px; font-size:13px;"></div>
+  </div>
+  <div style="margin-bottom: 12px;">
+    <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">Pegá todo el texto de la tabla acá (un sorteo por vez, 20 números):</label>
+    <textarea id="inputTextarea" placeholder="Ej: Sombrear toda la tabla de la web y pegar acá..." disabled></textarea>
   </div>
   <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-    <button onclick="procesarYSubirExtracto()">Subir Extracto a Supabase</button>
+    <button id="botonSubir" onclick="procesarYSubirExtracto()" disabled>Subir Extracto a Supabase</button>
     <span id="loadingStatus" style="align-self: center; font-size: 13px; color: var(--sunset); display: none;">Guardando en la nube...</span>
   </div>
   <p id="totalSorteos" style="margin-top: 12px; font-size: 13px; color: var(--text-dim);">Total de números en la base de datos: 0</p>
@@ -158,16 +179,23 @@
 </div>
 
 <div class="card">
-  <h3>💡 Generador de Tendencia de Corto Alcance y Radar</h3>
-  <button onclick="generarSugerencia()">Generar Pronóstico Rápido</button>
+  <h3>💡 Pronóstico y Radar de Seguimiento</h3>
+  <button onclick="generarSugerencia()">Generar Pronóstico Nuevo</button>
   <div id="sugerencia" class="resultado-box" style="margin-top: 12px; font-size: 16px; color: var(--green-primary); font-weight: bold; text-align: center; display: grid; place-items: center;">
     Presioná el botón para proyectar...
   </div>
-  
+
   <div style="margin-top: 16px;">
-    <span style="font-size:13px; color:var(--text-dim); font-weight:bold;">🎯 Radar de Seguimiento (Aciertos en nuevos extractos):</span>
+    <span style="font-size:13px; color:var(--text-dim); font-weight:bold;">🎯 Radar (cuenta solo los sorteos cargados después del pronóstico; cierra cuando sale uno de tus números en los 10 primeros):</span>
     <div id="radarResultados" class="resultado-box" style="margin-top:6px; font-size:12px; color:var(--text-dim);">
       Generá un pronóstico para activar el radar de seguimiento.
+    </div>
+  </div>
+
+  <div style="margin-top: 16px;">
+    <span style="font-size:13px; color:var(--text-dim); font-weight:bold;">📈 Historial de ciclos cerrados:</span>
+    <div id="historialCiclos" class="resultado-box" style="margin-top:6px; font-size:12px; color:var(--text-dim);">
+      Todavía no hay ciclos cerrados.
     </div>
   </div>
 </div>
@@ -177,33 +205,335 @@
   const SUPABASE_KEY = "sb_publishable_BeBdr9Dccux5yIVoqFXygA_WXKGbDQQ";
   const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  document.getElementById('inputFecha').valueAsDate = new Date();
-  let historialTerminaciones = [];
-  let pronosticoActual = [];
+  // ==== LOGICA PURA (se prueba por separado) ====
+  const PUESTOS_OBJETIVO = 10;
 
+  function extraerSorteo(texto) {
+    let pares = [];
+    let regex = /\b(\d{1,2})\s+(\d{4})\b/g;
+    let m;
+    while ((m = regex.exec(texto)) !== null) {
+      pares.push({ puesto: parseInt(m[1], 10), numero: m[2] });
+    }
+    return pares;
+  }
+
+  function sorteoValido(pares) {
+    if (pares.length !== 20) return false;
+    let puestos = pares.map(p => p.puesto).sort((a, b) => a - b);
+    return puestos.every((p, i) => p === i + 1);
+  }
+
+  // Agrupa en sorteos las filas posteriores a desdeId (cada carga comparte creado_en).
+  function agruparSorteos(filas, desdeId) {
+    let sorteos = [];
+    let actual = null;
+    for (const f of filas) {
+      if (f.id <= desdeId) continue;
+      if (!actual || actual.clave !== f.creado_en) {
+        actual = { clave: f.creado_en, fecha: f.fecha, filas: [] };
+        sorteos.push(actual);
+      }
+      actual.filas.push(f);
+    }
+    return sorteos;
+  }
+
+  // Recorre los sorteos en orden y cierra el ciclo en el primero donde sale
+  // alguno de los números dentro de los primeros PUESTOS_OBJETIVO puestos.
+  function evaluarCiclo(numeros, sorteos) {
+    let detalle = [];
+    for (let i = 0; i < sorteos.length; i++) {
+      let s = sorteos[i];
+      let salidos = s.filas
+        .filter(f => numeros.includes(f.numero))
+        .map(f => ({ numero: f.numero, puesto: f.puesto }))
+        .sort((a, b) => (a.puesto == null ? 99 : a.puesto) - (b.puesto == null ? 99 : b.puesto));
+      detalle.push({ nro: i + 1, fecha: s.fecha, salidos: salidos });
+      let enObjetivo = salidos.filter(x => x.puesto != null && x.puesto <= PUESTOS_OBJETIVO);
+      if (enObjetivo.length > 0) {
+        return {
+          cerrado: true,
+          sorteosEspera: i + 1,
+          fecha: s.fecha,
+          numero: enObjetivo[0].numero,
+          puesto: enObjetivo[0].puesto,
+          detalle: detalle
+        };
+      }
+    }
+    return { cerrado: false, sorteosEspera: null, detalle: detalle };
+  }
+
+  function resumenCiclos(ciclos) {
+    let n = ciclos.length;
+    if (n === 0) return { n: 0, promedio: null, maximo: null, cabezas: 0 };
+    let suma = ciclos.reduce((a, c) => a + c.sorteos_espera, 0);
+    return {
+      n: n,
+      promedio: suma / n,
+      maximo: Math.max(...ciclos.map(c => c.sorteos_espera)),
+      cabezas: ciclos.filter(c => c.puesto_acierto === 1).length
+    };
+  }
+
+  const OBJETIVO_CICLOS = 100;
+
+  // Compara el promedio de espera y la cantidad de cierres a la cabeza con lo que daría el azar.
+  // Rango del azar = promedio teórico ± 2 errores estándar (aprox. 95%).
+  function comparacionAzar(ciclos) {
+    let n = ciclos.length;
+    if (n === 0) return null;
+    let p = 1 - Math.pow(0.96, PUESTOS_OBJETIVO);          // prob. de cerrar en un sorteo
+    let mu = 1 / p;                                          // espera promedio teórica
+    let sd = Math.sqrt(1 - p) / p;                           // desvío de la espera de un ciclo
+    let se = sd / Math.sqrt(n);
+    let promedio = ciclos.reduce((a, c) => a + c.sorteos_espera, 0) / n;
+    let z = (promedio - mu) / se;
+    let estado = promedio < mu - 2 * se ? 'debajo' : (promedio > mu + 2 * se ? 'arriba' : 'dentro');
+
+    // Cierres a la cabeza: si un ciclo cierra, la chance de que sea en el puesto 1 es 4% / p
+    let pCab = 0.04 / p;
+    let cabezas = ciclos.filter(c => c.puesto_acierto === 1).length;
+    let esperadasCab = n * pCab;
+    let seCab = Math.sqrt(n * pCab * (1 - pCab));
+    let estadoCab = cabezas < esperadasCab - 2 * seCab ? 'debajo' : (cabezas > esperadasCab + 2 * seCab ? 'arriba' : 'dentro');
+
+    return {
+      n: n, promedio: promedio, mu: mu, lo: mu - 2 * se, hi: mu + 2 * se, z: z, estado: estado,
+      cabezas: cabezas, esperadasCab: esperadasCab, estadoCab: estadoCab,
+      faltan: Math.max(0, OBJETIVO_CICLOS - n)
+    };
+  }
+
+  // Probabilidad por azar de que alguno de cantNumeros terminaciones salga en los primeros "puestos".
+  function probabilidadAzar(cantNumeros, puestos) {
+    return 1 - Math.pow(1 - cantNumeros / 100, puestos);
+  }
+
+  function formatearFecha(f) {
+    if (!f) return '';
+    let p = String(f).split('-');
+    return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : f;
+  }
+  // ---- Control de carga: fechas, días completos y sorteos repetidos ----
+  const SORTEOS_POR_DIA = 5;
+  const SALTO_MAXIMO_DIAS = 3;   // en tus datos el salto máximo entre cargas fue de 3 días (domingo + feriado)
+  const NOMBRES_SORTEOS = ['La Previa', 'El 1º de la Mañana', 'Matutina', 'Vespertina', 'Nocturna'];
+
+  function sumarDias(fecha, n) {
+    let d = new Date(fecha + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function diasEntre(a, b) {
+    return Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000);
+  }
+
+  function esDomingo(fecha) {
+    return new Date(fecha + 'T00:00:00Z').getUTCDay() === 0;
+  }
+
+  function hoyLocal() {
+    let d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  // Agrupa las filas en sorteos (cada carga comparte creado_en). Solo cuentan los de 20 filas con puestos 1-20.
+  function agruparCargas(filas) {
+    let mapa = new Map();
+    for (const f of filas) {
+      if (f.puesto == null) continue;
+      if (!mapa.has(f.creado_en)) mapa.set(f.creado_en, []);
+      mapa.get(f.creado_en).push(f);
+    }
+    let cargas = [];
+    for (const [clave, fs] of mapa) {
+      if (fs.length !== 20) continue;
+      let ord = fs.slice().sort((a, b) => a.puesto - b.puesto);
+      if (!ord.every((x, i) => x.puesto === i + 1)) continue;
+      cargas.push({
+        clave: clave,
+        fecha: ord[0].fecha,
+        idDesde: Math.min(...fs.map(x => x.id)),
+        cabeza: ord[0].numero,
+        puesto2: ord[1].numero,
+        firma: ord.map(x => x.puesto + ':' + x.numero).join(',')
+      });
+    }
+    cargas.sort((a, b) => a.idDesde - b.idDesde);
+    let porDia = {};
+    for (const c of cargas) {
+      porDia[c.fecha] = (porDia[c.fecha] || 0) + 1;
+      c.nroDelDia = porDia[c.fecha];
+    }
+    return cargas;
+  }
+
+  // Fecha que el analizador propone: la del último sorteo cargado, o el día siguiente (sin domingos) si ese día ya está completo.
+  function fechaSugerida(cargas, hoy) {
+    if (cargas.length === 0) return hoy;
+    let ultima = cargas[cargas.length - 1];
+    let delDia = cargas.filter(c => c.fecha === ultima.fecha).length;
+    if (delDia < SORTEOS_POR_DIA) return ultima.fecha;
+    let sig = sumarDias(ultima.fecha, 1);
+    if (esDomingo(sig)) sig = sumarDias(sig, 1);
+    return sig;
+  }
+
+  // estado: 'bloqueada' (no deja pegar ni subir), 'aviso' (deja, pero pide confirmar) u 'ok'.
+  function evaluarFecha(cargas, fecha, hoy) {
+    if (!fecha) return { estado: 'bloqueada', mensaje: 'Elegí la fecha del sorteo.' };
+    if (fecha > hoy) return { estado: 'bloqueada', mensaje: 'Esa fecha todavía no llegó (hoy es ' + formatearFecha(hoy) + ').' };
+    if (esDomingo(fecha)) return { estado: 'bloqueada', mensaje: 'Los domingos no hay sorteos. Elegí otra fecha.' };
+    if (cargas.length === 0) return { estado: 'ok', mensaje: 'Fecha correcta.' };
+
+    let ultima = cargas[cargas.length - 1];
+    if (fecha < ultima.fecha) {
+      return { estado: 'bloqueada', mensaje: 'La fecha es anterior al último sorteo cargado (' + formatearFecha(ultima.fecha) + '). Los sorteos tienen que cargarse en orden.' };
+    }
+    let delDia = cargas.filter(c => c.fecha === fecha).length;
+    if (delDia >= SORTEOS_POR_DIA) {
+      return { estado: 'bloqueada', mensaje: 'El ' + formatearFecha(fecha) + ' ya tiene los ' + SORTEOS_POR_DIA + ' sorteos cargados. Cambiá la fecha al día siguiente.' };
+    }
+    let salto = diasEntre(ultima.fecha, fecha);
+    if (salto > SALTO_MAXIMO_DIAS) {
+      return { estado: 'aviso', mensaje: 'La fecha salta ' + salto + ' días desde el último sorteo cargado (' + formatearFecha(ultima.fecha) + '). Si no hubo feriados largos, revisala.' };
+    }
+    return {
+      estado: 'ok',
+      mensaje: formatearFecha(fecha) + ': ' + delDia + ' de ' + SORTEOS_POR_DIA + ' sorteos cargados. Toca el sorteo n° ' + (delDia + 1) + ' (en el orden habitual: ' + NOMBRES_SORTEOS[delDia] + ').'
+    };
+  }
+
+  // Si el sorteo nuevo es idéntico a uno ya cargado (mismos 20 puestos y terminaciones), devuelve esa carga.
+  function buscarDuplicado(cargas, nuevosRegistros) {
+    let firma = nuevosRegistros.slice().sort((a, b) => a.puesto - b.puesto).map(r => r.puesto + ':' + r.terminacion).join(',');
+    return cargas.find(c => c.firma === firma) || null;
+  }
+  // ==== FIN LOGICA PURA ====
+
+  let cargasHechas = [];
+  let datosCargados = false;
+  let mensajeBloqueo = 'Leyendo la base de datos...';
+  let subiendo = false;
+
+  // Evalúa la fecha elegida: si no está ok, bloquea el cuadro de pegado y el botón de subir.
+  function revisarFecha() {
+    let fecha = document.getElementById('inputFecha').value;
+    let r = datosCargados
+      ? evaluarFecha(cargasHechas, fecha, hoyLocal())
+      : { estado: 'bloqueada', mensaje: mensajeBloqueo };
+    let colores = { ok: 'var(--green-primary)', aviso: 'var(--sunset)', bloqueada: 'var(--alert-red)' };
+    let iconos = { ok: '✅ ', aviso: '⚠️ ', bloqueada: '⛔ ' };
+    let caja = document.getElementById('estadoFecha');
+    caja.style.color = colores[r.estado];
+    caja.textContent = iconos[r.estado] + r.mensaje;
+    let bloqueada = r.estado === 'bloqueada';
+    document.getElementById('inputTextarea').disabled = bloqueada;
+    document.getElementById('botonSubir').disabled = bloqueada;
+    return r;
+  }
+
+  function renderUltimasCargas() {
+    let caja = document.getElementById('ultimasCargas');
+    if (cargasHechas.length === 0) {
+      caja.textContent = 'Todavía no hay sorteos cargados.';
+      return;
+    }
+    caja.innerHTML = cargasHechas.slice(-6).reverse().map((c, i) =>
+      (i === 0 ? '👉 ' : '') + formatearFecha(c.fecha) + ' · sorteo ' + c.nroDelDia + ' del día · cabeza <strong style="color:var(--text);">' + c.cabeza +
+      '</strong> · puesto 2: <strong style="color:var(--text);">' + c.puesto2 + '</strong>' +
+      (i === 0 ? ' <span style="color:var(--green-primary);">(último cargado)</span>' : '')
+    ).join('<br>');
+  }
+
+  let historialTerminaciones = [];
+  let pronosticosGuardados = [];
+  let errorPronosticos = null;
+  let cerrandoCiclo = false;
+
+  // Supabase devuelve como máximo 1000 filas por consulta: se piden de a 1000, ordenadas por id.
   async function cargarDatosDesdeSupabase() {
+    const TAM_PAGINA = 1000;
+    let filas = [];
+    let desde = 0;
+
+    while (true) {
+      let { data, error } = await supabaseClient
+        .from('extractos_quiniela')
+        .select('id, terminacion, fecha, puesto, creado_en')
+        .order('id', { ascending: true })
+        .range(desde, desde + TAM_PAGINA - 1);
+
+      if (error) {
+        console.error("Error al cargar de Supabase:", error);
+        datosCargados = false;
+        mensajeBloqueo = 'No se pudieron leer los datos de Supabase. Recargá la página.';
+        document.getElementById('ultimasCargas').textContent = mensajeBloqueo;
+        revisarFecha();
+        return;
+      }
+
+      filas = filas.concat(data);
+      if (data.length < TAM_PAGINA) break;
+      desde += TAM_PAGINA;
+    }
+
+    historialTerminaciones = filas.map(row => ({
+      id: row.id,
+      numero: row.terminacion,
+      fecha: row.fecha,
+      puesto: row.puesto,
+      creado_en: row.creado_en
+    }));
+
+    // Control de carga: últimas cargas, fecha sugerida y bloqueos
+    cargasHechas = agruparCargas(historialTerminaciones);
+    datosCargados = true;
+    document.getElementById('inputFecha').value = fechaSugerida(cargasHechas, hoyLocal());
+    renderUltimasCargas();
+    revisarFecha();
+
+    actualizarEstadisticas();
+    await cargarPronosticos();
+    await evaluarRadar();
+  }
+
+  async function cargarPronosticos() {
     let { data, error } = await supabaseClient
-      .from('extractos_quiniela')
-      .select('terminacion, fecha, puesto')
-      .order('fecha', { ascending: true })
+      .from('pronosticos')
+      .select('*')
       .order('id', { ascending: true });
 
     if (error) {
-      console.error("Error al cargar de Supabase:", error);
+      console.error("Error al cargar pronósticos:", error);
+      errorPronosticos = error.message;
+      pronosticosGuardados = [];
       return;
     }
+    errorPronosticos = null;
+    pronosticosGuardados = data;
+  }
 
-    historialTerminaciones = data.map(row => ({
-      numero: row.terminacion,
-      fecha: row.fecha,
-      puesto: row.puesto
-    }));
-
-    actualizarEstadisticas();
-    verificarRadar();
+  function pronosticoAbierto() {
+    let ultimo = pronosticosGuardados[pronosticosGuardados.length - 1];
+    return (ultimo && !ultimo.cerrado) ? ultimo : null;
   }
 
   async function procesarYSubirExtracto() {
+    if (subiendo) return;   // evita subir el mismo sorteo dos veces por un doble clic
+
+    let revision = revisarFecha();
+    if (revision.estado === 'bloqueada') {
+      alert(revision.mensaje);
+      return;
+    }
+    if (revision.estado === 'aviso' && !confirm(revision.mensaje + "\n\n¿Querés cargarlo igual con esa fecha?")) {
+      return;
+    }
+
     let texto = document.getElementById('inputTextarea').value.trim();
     let fecha = document.getElementById('inputFecha').value;
 
@@ -212,24 +542,33 @@
       return;
     }
 
-    let tokens = texto.match(/\d+/g);
-    if (!tokens || tokens.length === 0) {
-      alert("No se detectaron números válidos en el texto.");
+    let pares = extraerSorteo(texto);
+
+    if (!sorteoValido(pares)) {
+      alert("El texto no es un sorteo completo. Se detectaron " + pares.length +
+            " números con su puesto, y tienen que ser exactamente 20 (puestos del 1 al 20, sin repetir). " +
+            "Revisá que hayas copiado la tabla entera y de un solo sorteo.");
       return;
     }
 
-    let numeros4Cifras = tokens.filter(numStr => numStr.length === 4);
-    if (numeros4Cifras.length === 0) {
-      alert("No se encontraron números de 4 cifras válidos.");
-      return;
-    }
+    pares.sort((a, b) => a.puesto - b.puesto);
 
-    let nuevosRegistros = numeros4Cifras.map((numStr, index) => ({
+    let nuevosRegistros = pares.map(p => ({
       fecha: fecha,
-      terminacion: numStr.slice(-2),
-      puesto: index + 1
+      terminacion: p.numero.slice(-2),
+      puesto: p.puesto
     }));
 
+    // Un sorteo idéntico a cualquiera ya cargado es un error de carga: no se guarda.
+    let repetido = buscarDuplicado(cargasHechas, nuevosRegistros);
+    if (repetido) {
+      alert("Este sorteo ya está cargado: es el sorteo n° " + repetido.nroDelDia + " del " + formatearFecha(repetido.fecha) +
+            " (cabeza " + repetido.cabeza + "). No se guardó.");
+      return;
+    }
+
+    subiendo = true;
+    document.getElementById('botonSubir').disabled = true;
     document.getElementById('loadingStatus').style.display = 'inline';
 
     let { error } = await supabaseClient
@@ -239,14 +578,18 @@
     document.getElementById('loadingStatus').style.display = 'none';
 
     if (error) {
+      subiendo = false;
+      revisarFecha();
       console.error("Error al guardar:", error);
       alert("Error al guardar en Supabase.");
       return;
     }
 
-    alert("¡Extracto guardado en la nube con éxito!");
     document.getElementById('inputTextarea').value = '';
-    cargarDatosDesdeSupabase();
+    await cargarDatosDesdeSupabase();
+    subiendo = false;
+    revisarFecha();
+    alert("¡Extracto guardado en la nube con éxito!");
   }
 
   function actualizarEstadisticas() {
@@ -266,7 +609,7 @@
 
     let conteo = {};
     for (let i = 0; i <= 99; i++) conteo[String(i).padStart(2, '0')] = 0;
-    
+
     datosAnalisis.forEach(item => {
       if (conteo[item.numero] !== undefined) conteo[item.numero]++;
     });
@@ -291,87 +634,205 @@
     let textCalientes = ordenadosFrecuencia.slice(0, 5).map(n => `Nº ${n} (${conteo[n]} apariciones)`).join('\n');
     document.getElementById('frecuentes').innerHTML = textCalientes.replace(/\n/g, '<br>');
 
-    let textFrios = atrasos.slice(0, 5).map(item => `Nº ${item.numero} (${item.atraso} pos. sin salir)`).join('\n');
+    // Cada sorteo tiene 20 números: se muestra también el atraso en sorteos.
+    let textFrios = atrasos.slice(0, 5).map(item => `Nº ${item.numero} (${item.atraso} pos. ≈ ${Math.floor(item.atraso / 20)} sorteos sin salir)`).join('\n');
     document.getElementById('atrasados').innerHTML = textFrios.replace(/\n/g, '<br>');
   }
 
-  function generarSugerencia() {
+  async function generarSugerencia() {
     if (historialTerminaciones.length === 0) {
       alert("No hay datos cargados en la base todavía.");
       return;
     }
 
-    // Analizar los últimos 50 números para obtener un abanico dinámico de opciones frescas
-    let ultimosCorte = historialTerminaciones.slice(-50);
+    let abierto = pronosticoAbierto();
+    if (abierto) {
+      let ok = confirm("Todavía tenés un pronóstico en seguimiento (" + abierto.numeros.split(',').join(' - ') +
+                       ") que no cerró. Si generás uno nuevo, ese ciclo se descarta y no cuenta en las estadísticas. ¿Continuar?");
+      if (!ok) return;
+      let { error: errDescarte } = await supabaseClient
+        .from('pronosticos')
+        .update({ cerrado: true })
+        .eq('id', abierto.id);
+      if (errDescarte) {
+        console.error(errDescarte);
+        alert("No se pudo descartar el pronóstico anterior: " + errDescarte.message);
+        return;
+      }
+    }
+
+    // Estrategia de Corto Alcance: analizar solo los últimos 40 números para cazar tendencias rápidas
+    let ultimosCorte = historialTerminaciones.slice(-40);
     let conteoCorto = {};
     for (let i = 0; i <= 99; i++) conteoCorto[String(i).padStart(2, '0')] = 0;
-    
+
     ultimosCorte.forEach(item => {
       if (conteoCorto[item.numero] !== undefined) conteoCorto[item.numero]++;
     });
 
-    // Tomar los 15 números con mejor frecuencia reciente
-    let calientesRecientes = Object.keys(conteoCorto).sort((a, b) => conteoCorto[b] - conteoCorto[a]).slice(0, 15);
-
-    // Seleccionar 4 números al azar de entre esos candidatos para que varíen en cada click
-    let sugeridos = [];
-    let candidatosCopia = [...calientesRecientes];
-    while (sugeridos.length < 4 && candidatosCopia.length > 0) {
-      let randomIndex = Math.floor(Math.random() * candidatosCopia.length);
-      let numElegido = candidatosCopia.splice(randomIndex, 1)[0];
-      if (!sugeridos.includes(numElegido)) {
-        sugeridos.push(numElegido);
-      }
-    }
+    let calientesRecientes = Object.keys(conteoCorto).sort((a, b) => conteoCorto[b] - conteoCorto[a]);
+    let sugeridos = calientesRecientes.slice(0, 4);
     sugeridos.sort();
 
-    pronosticoActual = sugeridos;
+    let desdeId = historialTerminaciones.reduce((m, r) => Math.max(m, r.id), 0);
 
-    document.getElementById('sugerencia').innerHTML = `
-      <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">Proyección de Corto Alcance (Dinámica):</div>
-      <span style="font-size:24px; letter-spacing: 4px; color:var(--green-primary);">${sugeridos.join(' - ')}</span>
-    `;
+    let { error } = await supabaseClient
+      .from('pronosticos')
+      .insert({ numeros: sugeridos.join(','), desde_id: desdeId });
 
-    verificarRadar();
+    if (error) {
+      console.error("Error al guardar el pronóstico:", error);
+      alert("No se pudo guardar el pronóstico: " + error.message);
+      return;
+    }
+
+    await cargarPronosticos();
+    await evaluarRadar();
   }
 
-  function verificarRadar() {
-    if (pronosticoActual.length === 0 || historialTerminaciones.length === 0) {
-      document.getElementById('radarResultados').innerHTML = "Generá un pronóstico para activar el radar de seguimiento.";
-      return;
-    }
-
-    let encontrados = [];
-    historialTerminaciones.forEach(item => {
-      if (pronosticoActual.includes(item.numero)) {
-        encontrados.push(item);
+  // Evalúa el pronóstico abierto con los sorteos cargados después de generarlo.
+  // Si ya cerró, guarda el resultado en Supabase.
+  async function evaluarRadar() {
+    let abierto = pronosticoAbierto();
+    if (abierto && !cerrandoCiclo) {
+      let numeros = abierto.numeros.split(',');
+      let sorteos = agruparSorteos(historialTerminaciones, abierto.desde_id);
+      let ciclo = evaluarCiclo(numeros, sorteos);
+      if (ciclo.cerrado) {
+        cerrandoCiclo = true;
+        let { error } = await supabaseClient
+          .from('pronosticos')
+          .update({
+            cerrado: true,
+            sorteos_espera: ciclo.sorteosEspera,
+            fecha_acierto: ciclo.fecha,
+            numero_acierto: ciclo.numero,
+            puesto_acierto: ciclo.puesto
+          })
+          .eq('id', abierto.id);
+        cerrandoCiclo = false;
+        if (error) {
+          console.error("Error al cerrar el ciclo:", error);
+        } else {
+          await cargarPronosticos();
+        }
       }
-    });
+    }
+    renderPronosticoYRadar();
+    renderHistorialCiclos();
+  }
 
-    if (encontrados.length === 0) {
-      document.getElementById('radarResultados').innerHTML = `Vigilando los números <strong style="color:var(--green-primary);">${pronosticoActual.join(', ')}</strong>... Todavía no salieron en los extractos posteriores cargados.`;
+  function renderPronosticoYRadar() {
+    let cajaSug = document.getElementById('sugerencia');
+    let cajaRadar = document.getElementById('radarResultados');
+
+    if (errorPronosticos) {
+      cajaSug.innerHTML = "Presioná el botón para proyectar...";
+      cajaRadar.innerHTML = `No se pudo leer la tabla <strong>pronosticos</strong> de Supabase: ${errorPronosticos}`;
       return;
     }
 
-    let aciertosHtml = "";
-    let hayCabeza = false;
-
-    encontrados.forEach(acierto => {
-      let esCabeza = (acierto.puesto === 1);
-      if (esCabeza) hayCabeza = true;
-
-      let estiloPuesto = esCabeza ? "color: var(--alert-red); font-weight: bold; font-size: 14px;" : "color: var(--green-primary);";
-      let textoPuesto = esCabeza ? "¡¡ A LA CABEZA (Puesto 1) !!" : `en el Puesto ${acierto.puesto || 'desconocido'}`;
-
-      aciertosHtml += `<div style="margin-bottom: 4px;">📅 ${acierto.fecha} ➔ Salió el número <strong style="color:var(--text); font-size:13px;">[${acierto.numero}]</strong> <span style="${estiloPuesto}">${textoPuesto}</span></div>`;
-    });
-
-    let htmlFinal = aciertosHtml;
-    if (hayCabeza) {
-      htmlFinal += `<div class="alerta-cabeza">🚨 ¡ALERTA DE ACIERTO! Uno de tus números proyectados salió a la cabeza. ¡Recordá generar una nueva proyección!</div>`;
+    let ultimo = pronosticosGuardados[pronosticosGuardados.length - 1];
+    if (!ultimo) {
+      cajaSug.innerHTML = "Presioná el botón para proyectar...";
+      cajaRadar.innerHTML = "Generá un pronóstico para activar el radar de seguimiento.";
+      return;
     }
 
-    document.getElementById('radarResultados').innerHTML = htmlFinal;
+    let numeros = ultimo.numeros.split(',');
+    cajaSug.innerHTML = `
+      <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">${ultimo.cerrado ? 'Último pronóstico:' : 'Pronóstico en seguimiento:'}</div>
+      <span style="font-size:24px; letter-spacing: 4px; color:var(--green-primary);">${numeros.join(' - ')}</span>
+    `;
+
+    // Ciclo ya cerrado con resultado
+    if (ultimo.cerrado && ultimo.sorteos_espera != null) {
+      let esCabeza = ultimo.puesto_acierto === 1;
+      let html = `Ciclo cerrado: salió el <strong style="color:var(--text);">[${ultimo.numero_acierto}]</strong> en el sorteo del ${formatearFecha(ultimo.fecha_acierto)}, ` +
+                 `puesto <strong style="color:var(--text);">${ultimo.puesto_acierto}</strong>, ` +
+                 `después de <strong style="color:var(--text);">${ultimo.sorteos_espera}</strong> sorteo(s) de espera.`;
+      if (esCabeza) {
+        html += `<div class="alerta-cabeza">🚨 ¡ALERTA DE ACIERTO! Salió A LA CABEZA (puesto 1). Generá un pronóstico nuevo.</div>`;
+      } else {
+        html += `<div class="aviso-acierto">✅ Salió dentro de los 10 primeros. Generá un pronóstico nuevo para seguir.</div>`;
+      }
+      cajaRadar.innerHTML = html;
+      return;
+    }
+
+    // Pronóstico descartado sin resultado
+    if (ultimo.cerrado) {
+      cajaRadar.innerHTML = "El último pronóstico se descartó sin cerrar. Generá uno nuevo.";
+      return;
+    }
+
+    // Pronóstico abierto: se evalúa en vivo
+    let sorteos = agruparSorteos(historialTerminaciones, ultimo.desde_id);
+    let ciclo = evaluarCiclo(numeros, sorteos);
+    let html = `Vigilando <strong style="color:var(--green-primary);">${numeros.join(', ')}</strong>. ` +
+               `Sorteos cargados desde que generaste el pronóstico: <strong style="color:var(--text);">${sorteos.length}</strong>.`;
+    if (ciclo.detalle.length === 0) {
+      html += `<div style="margin-top:6px;">Todavía no cargaste ningún sorteo nuevo.</div>`;
+    } else {
+      html += `<div style="margin-top:6px;">` + ciclo.detalle.map(d => {
+        let texto = d.salidos.length === 0
+          ? 'ninguno de tus números'
+          : d.salidos.map(s => `${s.numero} (puesto ${s.puesto})`).join(', ') + ' — fuera de los 10 primeros';
+        return `📅 Sorteo ${d.nro} (${formatearFecha(d.fecha)}): ${texto}`;
+      }).join('<br>') + `</div>`;
+    }
+    cajaRadar.innerHTML = html;
+  }
+
+  function renderHistorialCiclos() {
+    let caja = document.getElementById('historialCiclos');
+    let cerrados = pronosticosGuardados.filter(p => p.cerrado && p.sorteos_espera != null);
+    if (cerrados.length === 0) {
+      caja.innerHTML = "Todavía no hay ciclos cerrados.";
+      return;
+    }
+
+    let r = resumenCiclos(cerrados);
+    let pObj = probabilidadAzar(4, PUESTOS_OBJETIVO);
+    let pCab = probabilidadAzar(4, 1);
+
+    let filas = cerrados.slice().reverse().slice(0, 15).map(c => `
+      <tr>
+        <td>${c.numeros.split(',').join(' ')}</td>
+        <td>${c.sorteos_espera}</td>
+        <td>${formatearFecha(c.fecha_acierto)}</td>
+        <td>${c.numero_acierto}</td>
+        <td>${c.puesto_acierto === 1 ? '🚨 1 (cabeza)' : c.puesto_acierto}</td>
+      </tr>`).join('');
+
+    let cmp = comparacionAzar(cerrados);
+    let textoEstado = { dentro: 'DENTRO del rango del azar', debajo: 'POR DEBAJO del rango del azar (espera más corta)', arriba: 'POR ENCIMA del rango del azar (espera más larga)' };
+    let textoCab = { dentro: 'dentro de lo esperable', debajo: 'menos de lo esperable', arriba: 'más de lo esperable' };
+    let colorEstado = cmp.estado === 'dentro' ? 'var(--text-dim)' : 'var(--sunset)';
+    let nota = `
+      <div style="margin-top:10px; padding:10px; border:1px solid var(--border); border-radius:8px;">
+        <div>📏 Tu promedio de <strong style="color:var(--text);">${cmp.promedio.toFixed(2)}</strong> sorteos está
+        <strong style="color:${colorEstado};">${textoEstado[cmp.estado]}</strong>:
+        con ${cmp.n} ciclos, el azar da entre <strong style="color:var(--text);">${cmp.lo.toFixed(2)}</strong> y
+        <strong style="color:var(--text);">${cmp.hi.toFixed(2)}</strong> (z = ${cmp.z.toFixed(2)}).</div>
+        <div style="margin-top:4px;">🎯 Cierres a la cabeza: <strong style="color:var(--text);">${cmp.cabezas}</strong>
+        (esperable por azar ≈ ${cmp.esperadasCab.toFixed(1)}) — ${textoCab[cmp.estadoCab]}.</div>
+        <div style="margin-top:4px; color:var(--sunset);">${cmp.faltan > 0
+          ? `Faltan ${cmp.faltan} ciclos para llegar a los ${OBJETIVO_CICLOS} que fijaste como objetivo. Hasta entonces, no es concluyente.`
+          : `Llegaste a los ${OBJETIVO_CICLOS} ciclos: este es el momento de leer el resultado.`}</div>
+      </div>`;
+
+    caja.innerHTML = `
+      <div>Ciclos cerrados: <strong style="color:var(--text);">${r.n}</strong> ·
+      Espera promedio: <strong style="color:var(--text);">${r.promedio.toFixed(1)}</strong> sorteos ·
+      Máxima: <strong style="color:var(--text);">${r.maximo}</strong> ·
+      A la cabeza: <strong style="color:var(--text);">${r.cabezas}</strong></div>
+      <div style="margin-top:4px;">Lo esperable por azar con 4 números: ≈ <strong style="color:var(--text);">${(1 / pObj).toFixed(1)}</strong> sorteos de espera promedio para los 10 primeros (${(pObj * 100).toFixed(0)}% por sorteo) y ≈ <strong style="color:var(--text);">${(1 / pCab).toFixed(0)}</strong> para la cabeza (${(pCab * 100).toFixed(0)}% por sorteo).</div>
+      <table class="ciclos" style="margin-top:8px;">
+        <tr><th>Números</th><th>Espera</th><th>Fecha</th><th>Salió</th><th>Puesto</th></tr>
+        ${filas}
+      </table>
+      ${nota}`;
   }
 
   cargarDatosDesdeSupabase();
@@ -379,3 +840,4 @@
 
 </body>
 </html>
+
